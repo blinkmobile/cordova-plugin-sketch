@@ -5,7 +5,7 @@ This plugin defines a navigator.Sketch object, which supplies an interface to la
 ## Installation
 
 ```sh
-cordova plugin add https://github.com/blinkmobile/cordova-plugin-sketch.git
+cordova plugin add https://github.com/MatthewKapteyn/cordova-plugin-sketch.git
 ```
 
 ## Sketch.getSketch

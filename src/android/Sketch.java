@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
@@ -23,9 +24,11 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.UUID;
+
 
 /**
  * Created by jt on 29/03/16.
@@ -122,6 +125,8 @@ public class Sketch extends CordovaPlugin {
                     touchDrawIntent.putExtra(TouchDrawActivity.DRAWING_RESULT_ENCODING_TYPE,
                             Bitmap.CompressFormat.JPEG.ordinal());
                 }
+
+                touchDrawIntent.putExtra(TouchDrawActivity.DRAWING_RESULT_TEMP_PATH, Sketch.this.cordova.getActivity().getCacheDir());
 
                 Sketch.this.cordova.getActivity().runOnUiThread(new Runnable() {
                     @Override
@@ -223,6 +228,8 @@ public class Sketch extends CordovaPlugin {
                             Bitmap.CompressFormat.JPEG.ordinal());
                 }
 
+                touchDrawIntent.putExtra(TouchDrawActivity.DRAWING_RESULT_TEMP_PATH, Sketch.this.cordova.getActivity().getCacheDir());
+
                 touchDrawIntent.putExtra(TouchDrawActivity.BACKGROUND_IMAGE_URL, inputData);
                 Sketch.this.cordova.getActivity().runOnUiThread(new Runnable() {
                     @Override
@@ -265,44 +272,63 @@ public class Sketch extends CordovaPlugin {
 
     private void saveDrawing(Intent intent) {
         Bundle extras = intent.getExtras();
-        byte[] drawingData = null;
+        String drawingPath = null;
         String output = null;
 
-        if (extras != null &&
-                extras.containsKey(TouchDrawActivity.DRAWING_RESULT_PARCELABLE)) {
-            drawingData = extras.getByteArray(TouchDrawActivity.DRAWING_RESULT_PARCELABLE);
+        if (extras != null && extras.containsKey(TouchDrawActivity.DRAWING_RESULT_PARCELABLE)) {
+            drawingPath = extras.getString(TouchDrawActivity.DRAWING_RESULT_PARCELABLE);
+            LOG.d(TAG, "Signaled we have a temp file in: " + drawingPath);
         }
 
-        if (drawingData == null || drawingData.length == 0) {
+        // Error out if we didn't get back a file path
+        if (drawingPath == null || drawingPath.length() == 0) {
             LOG.e(TAG, "Failed to read sketch result from activity");
             this.callbackContext.error("Failed to read sketch result from activity");
             return;
         }
 
         try {
-            String ext = "";
-
-            if (encodingType == EncodingType.JPEG) {
-                ext = "jpeg";
-            } else if (encodingType == EncodingType.PNG) {
-                ext = "png";
-            }
-
             if (destinationType == DestinationType.DATA_URL) {
-                output = "data:image/" + ext + ";base64," + Base64.encodeToString(drawingData, Base64.DEFAULT);
-            } else if (destinationType == DestinationType.FILE_URI) {
-                // Save the drawing to the app's cache dir
-                String fileName = String.format("sketch-%s.%s", UUID.randomUUID(), ext);
-                File filePath = new File(this.cordova.getActivity().getCacheDir(), fileName);
+                String dataenc = "";
+                byte[] drawingData = null;
 
-                FileOutputStream fos = new FileOutputStream(filePath);
-                fos.write(drawingData);
-                fos.close();
+                if (encodingType == EncodingType.JPEG) {
+                    dataenc = "jpeg";
+                } else if (encodingType == EncodingType.PNG) {
+                    dataenc = "png";
+                }
+
+                LOG.d(TAG, "Reading temp file from: " + drawingPath);
+                // decode the file and convert to byte array
+                Bitmap bm = BitmapFactory.decodeFile(drawingPath);
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+                // write the image data to output stream using the right encoding type
+                if (encodingType == EncodingType.PNG) {
+                    bm.compress(Bitmap.CompressFormat.PNG, 100, baos);  
+                } else {
+                    bm.compress(Bitmap.CompressFormat.JPEG, 100, baos);  
+                }
+ 
+                // convert stream to array data
+                drawingData = baos.toByteArray();
+
+                // error out if we didn't successfully read back the temp file
+                if (drawingData == null || drawingData.length == 0) {
+                    LOG.e(TAG, "Failed to read sketch result from activity");
+                    this.callbackContext.error("Failed to read sketch result from activity");
+                    return;
+                }
+
+                output = "data:image/" + dataenc + ";base64," + Base64.encodeToString(drawingData, Base64.DEFAULT);
+            } else if (destinationType == DestinationType.FILE_URI) {
+                // Get the filename based on the absolute path we received
+                String fileName = drawingPath.substring(drawingPath.lastIndexOf("/")+1);
 
                 // Add the drawing to photo gallery
                 String appName = getApplicationLabelOrPackageName(this.cordova.getActivity());
                 String mediaStoreUrl = MediaStore.Images.Media.insertImage(this.cordova.getActivity().getContentResolver(),
-                        filePath.getAbsolutePath(), fileName,
+                        drawingPath, fileName,
                         (appName != null && !appName.isEmpty()) ? "Generated by " + appName : "");
 
                 LOG.d(TAG, (mediaStoreUrl != null) ?
@@ -311,7 +337,7 @@ public class Sketch extends CordovaPlugin {
 
                 // We need to return the file saved to the cache dir instead of the
                 // file in the photo gallery because the Cordova file plugin cannot open content URIs
-                output = "file://" + filePath.getAbsolutePath();
+                output = "file://" + drawingPath;
                 LOG.d(TAG, "Drawing saved to: " + output);
             }
         } catch(Exception e) {

@@ -30,12 +30,14 @@ import android.widget.TextView;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.UUID;
 
 public class TouchDrawActivity extends Activity {
     public static final String DRAWING_RESULT_PARCELABLE = "drawing_result";
@@ -47,15 +49,16 @@ public class TouchDrawActivity extends Activity {
     public static final int RESULT_TOUCHDRAW_ERROR = Activity.RESULT_FIRST_USER;
     public static final String DRAWING_RESULT_SCALE = "drawing_scale";
     public static final String DRAWING_RESULT_ENCODING_TYPE = "drawing_encoding_type";
+    public static final String DRAWING_RESULT_TEMP_PATH = "drawing_temp_path";
 
     private Paint mPaint;
     private int mStrokeWidth = 4;
-    private int mScale = 35;
     private Bitmap mBitmap;
     private TouchDrawView mTdView;
     private BackgroundImageType mBackgroundImageType = BackgroundImageType.COLOUR;
     private String mBackgroundColor = "#FFFFFF";
     private String mBackgroundImageUrl = "";
+    private String mTempFilePath = "";
     private Bitmap.CompressFormat mEncodingType = Bitmap.CompressFormat.PNG;
     private int a, r, g, b; //Decoded ARGB color values for the background and erasing
 
@@ -81,8 +84,8 @@ public class TouchDrawActivity extends Activity {
                     intentExtras.getInt(BACKGROUND_IMAGE_TYPE, BackgroundImageType.COLOUR.ordinal())];
             mBackgroundImageUrl = intentExtras.getString(BACKGROUND_IMAGE_URL, mBackgroundImageUrl);
             mBackgroundColor = intentExtras.getString(BACKGROUND_COLOUR, mBackgroundColor);
+            mTempFilePath = intentExtras.getString(DRAWING_RESULT_TEMP_PATH, mTempFilePath);
             mStrokeWidth = intentExtras.getInt(STROKE_WIDTH, mStrokeWidth);
-            mScale = intentExtras.getInt(DRAWING_RESULT_SCALE, mScale);
             mEncodingType = Bitmap.CompressFormat.values()[
                     intentExtras.getInt(DRAWING_RESULT_ENCODING_TYPE, mEncodingType.ordinal())];
         }
@@ -332,21 +335,6 @@ public class TouchDrawActivity extends Activity {
         finish();
     }
 
-    public Bitmap scaleBitmap(Bitmap bitmap) {
-        int origWidth = bitmap.getWidth();
-        int origHeight = bitmap.getHeight();
-        int newWidth, newHeight;
-
-        if (mScale < 100) {
-            newWidth = (int) (origWidth * (mScale / 100.0));
-            newHeight = (int)(origHeight * (mScale / 100.0));
-        } else {
-            return bitmap;
-        }
-
-        return Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true);
-    }
-
     @Override
     public void onBackPressed() {
         cancelDrawing();
@@ -354,13 +342,40 @@ public class TouchDrawActivity extends Activity {
     }
 
     public void finishDrawing() {
-        ByteArrayOutputStream drawing = new ByteArrayOutputStream();
-        scaleBitmap(mBitmap).compress(mEncodingType, 100, drawing);
+        // checks if we have a valid bitmap first
+        if (mBitmap != null) {
+            // writes out final bitmap to a tempfile and sends back the path
+            try {
+                String suffix = "";
 
-        Intent drawingResult = new Intent();
-        drawingResult.putExtra(DRAWING_RESULT_PARCELABLE, drawing.toByteArray());
-        setResult(Activity.RESULT_OK, drawingResult);
-        finish();
+                if (mEncodingType == Bitmap.CompressFormat.JPEG) {
+                    suffix = ".jpg";
+                } else {
+                    suffix = ".png";
+                }
+
+                // Save the drawing to the app's cache/temp dir
+                File file = File.createTempFile(UUID.randomUUID().toString(), suffix);
+
+                FileOutputStream filecon = new FileOutputStream(file);
+                mBitmap.compress(mEncodingType, 100, filecon);
+                filecon.close();
+
+                Intent drawingResult = new Intent();
+                drawingResult.putExtra(DRAWING_RESULT_PARCELABLE, file.getAbsolutePath());
+                setResult(Activity.RESULT_OK, drawingResult);
+                finish();
+            } catch (IOException e) {
+                handleFileIOError(e);
+            }
+        } else {
+            Intent drawingResult = new Intent();
+
+            drawingResult.putExtra(DRAWING_RESULT_ERROR,
+                    "Had a technical problem drawing on the photo. Please try again.");
+            setResult(RESULT_TOUCHDRAW_ERROR, drawingResult);
+            finish();
+        }
     }
 
     @Override
